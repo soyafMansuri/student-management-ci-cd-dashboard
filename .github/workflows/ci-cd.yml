@@ -1,0 +1,242 @@
+name: CI/CD Pipeline
+
+# NOTE: the dashboard maps the job names and step names below to its 7 stages
+# (see dashboard/stages.py). If you rename a job or step, update that file too.
+
+on:
+  push:
+    branches: [main]          # change if your main branch has another name (and set repo variable MAIN_BRANCH)
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_NAME: student-management-system
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Validate Python syntax
+        run: python -m compileall -q app dashboard tests wsgi.py
+
+      - name: Validate configuration
+        run: |
+          pip check
+          python -c "import yaml; [yaml.safe_load(open(f)) for f in ('docker-compose.yml', '.github/workflows/ci-cd.yml')]; print('YAML OK')"
+          docker compose config --quiet
+          test -f Dockerfile && test -f .dockerignore && test -f .env.example
+          if git ls-files | grep -E '(^|/)\.env$|\.pem$'; then echo "Secret file committed!"; exit 1; fi
+
+  test:
+    name: Test
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        run: pytest -v
+
+  docker:
+    name: Docker Build & Push
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Check Docker Hub configuration
+        id: cfg
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          ON_MAIN: ${{ github.ref_name == (vars.MAIN_BRANCH || 'main') }}
+        run: |
+          # Images are only published from the main branch, never from pull requests.
+          if [ "$IS_PR" = "false" ] && [ "$ON_MAIN" = "true" ] && [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Image will be built and tested but NOT pushed (pull request, non-main branch, or Docker Hub secrets missing)."
+          fi
+
+      - name: Compute image tags
+        id: tags
+        if: steps.cfg.outputs.push == 'true'
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          REPO_VAR: ${{ vars.IMAGE_REPO }}
+        run: |
+          REPO="${REPO_VAR:-$DH_USER/$IMAGE_NAME}"
+          {
+            echo "tags<<EOF"
+            echo "$REPO:$GITHUB_SHA"
+            echo "$REPO:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test image
+        run: |
+          docker run -d --name smoke -p 8000:8000 "$IMAGE_NAME:ci"
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8000/api/health; then echo; echo "Smoke test passed"; exit 0; fi
+            sleep 2
+          done
+          docker logs smoke
+          exit 1
+
+      - name: Log in to Docker Hub
+        if: steps.cfg.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push image to Docker Hub
+        if: steps.cfg.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Record image summary
+        if: steps.cfg.outputs.push == 'true'
+        run: |
+          {
+            echo "### Docker image published"
+            echo "- Tag: \`$GITHUB_SHA\`"
+            echo "- Commit: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+    outputs:
+      pushed: ${{ steps.cfg.outputs.push }}
+
+  deploy:
+    name: Deploy to EC2
+    needs: docker
+    if: needs.docker.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/student-management' }}
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      IMAGE_REPO: ${{ vars.IMAGE_REPO || format('{0}/student-management-system', secrets.DOCKERHUB_USERNAME) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deployment configuration
+        id: cfg
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          if [ -n "$EC2_HOST" ] && [ -n "$EC2_USER" ] && [ -n "$EC2_SSH_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::EC2_HOST, EC2_USER or EC2_SSH_KEY is missing. Skipping deployment (image was still published)."
+          fi
+
+      - name: Set up SSH
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy deployment files
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes"
+          scp $SSH_OPTS -r docker-compose.yml nginx deploy "$EC2_USER@$EC2_HOST:$DEPLOY_DIR/"
+
+      - name: Deploy to EC2
+        id: deploy
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes"
+          printf '%s' "$DH_TOKEN" | ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "docker login -u '$DH_USER' --password-stdin"
+          ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" \
+            "cd '$DEPLOY_DIR' && chmod +x deploy/*.sh && IMAGE_REPO='$IMAGE_REPO' ./deploy/deploy.sh '$GITHUB_SHA'"
+
+      - name: Verify deployment health
+        id: verify
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL }}
+        run: |
+          URL="${APP_PUBLIC_URL:-http://$EC2_HOST}"
+          for i in $(seq 1 15); do
+            body=$(curl -fsS --max-time 5 "$URL/api/health" 2>/dev/null || true)
+            if printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('status')=='ok' and d.get('version')==sys.argv[1] else 1)" "$GITHUB_SHA" 2>/dev/null; then
+              echo "Healthy and running $GITHUB_SHA"
+              exit 0
+            fi
+            echo "Attempt $i: not healthy yet"
+            sleep 4
+          done
+          echo "::error::Deployment health check failed at $URL/api/health"
+          exit 1
+
+      - name: Roll back after failed health check
+        if: failure() && steps.deploy.outcome == 'success' && steps.verify.outcome == 'failure'
+        run: |
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes"
+          ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "cd '$DEPLOY_DIR' && ./deploy/rollback.sh"

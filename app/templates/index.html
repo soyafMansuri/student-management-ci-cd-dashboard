@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Student Management System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="top">
+    <h1>Student Management System</h1>
+    <p>Add, find and update student records.</p>
+  </header>
+
+  <main>
+    <section class="stats" aria-label="Statistics">
+      <div class="stat"><span class="num" id="stat-total">0</span><span>Students</span></div>
+      <div class="stat"><span class="num" id="stat-courses">0</span><span>Courses</span></div>
+      <div class="stat"><span class="num" id="stat-avg">0</span><span>Average semester</span></div>
+      <div class="stat wide"><span>Largest courses</span><div id="stat-top" class="chips"></div></div>
+    </section>
+
+    <section class="panel">
+      <h2 id="form-title">Add a student</h2>
+      <form id="student-form" novalidate>
+        <input type="hidden" id="student-id">
+        <div class="grid">
+          <label>Name<input id="name" maxlength="100" autocomplete="off"><small class="err" id="err-name"></small></label>
+          <label>Email<input id="email" type="email" maxlength="120" autocomplete="off"><small class="err" id="err-email"></small></label>
+          <label>Course<input id="course" maxlength="100" autocomplete="off"><small class="err" id="err-course"></small></label>
+          <label>Semester<input id="semester" type="number" min="1" max="12"><small class="err" id="err-semester"></small></label>
+        </div>
+        <p class="err" id="form-error" role="alert"></p>
+        <div class="actions">
+          <button type="submit" id="save-btn">Add student</button>
+          <button type="button" id="cancel-btn" class="ghost" hidden>Cancel editing</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="bar">
+        <h2>All students</h2>
+        <input id="search" type="search" placeholder="Search by name, email or course" aria-label="Search students">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Course</th><th>Semester</th><th>Added</th><th>Actions</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p id="empty" class="empty" hidden>No students found. Add one with the form above.</p>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

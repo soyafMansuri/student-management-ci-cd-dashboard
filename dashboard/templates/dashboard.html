@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CI/CD Dashboard</title>
+    <link rel="stylesheet" href="C:\Users\mansu\OneDrive\Desktop\folder\projects\student-management-system\student-management-system\dashboard\static\dashboard.css">
+</head>
+
+<body data-refresh="{{ refresh }}">
+    <header class="top">
+        <div>
+            <h1>CI/CD Dashboard</h1>
+            <p id="repo-line">Loading pipeline data…</p>
+        </div>
+        <div class="refresh">
+            <span id="last-refresh">Not refreshed yet</span>
+            <button id="refresh-btn" type="button">Refresh</button>
+        </div>
+    </header>
+
+    <main>
+        <div id="banner" class="banner" role="alert" hidden></div>
+        <section id="cards" class="cards" aria-label="Overview"></section>
+
+        <section class="filters" aria-label="Filters">
+            <label>Branch <select id="f-branch"><option value="">All</option></select></label>
+            <label>Workflow <select id="f-workflow"><option value="">All</option></select></label>
+            <label>Status
+        <select id="f-status">
+          <option value="">All</option><option value="success">Success</option><option value="failed">Failed</option>
+          <option value="in_progress">Running</option><option value="pending">Queued</option><option value="cancelled">Cancelled</option>
+        </select>
+      </label>
+        </section>
+
+        <section id="runs" aria-label="Pipeline runs"></section>
+        <p id="no-runs" class="empty" hidden></p>
+    </main>
+    <script src="C:\Users\mansu\OneDrive\Desktop\folder\projects\student-management-system\student-management-system\dashboard\static\dashboard.js"></script>
+</body>
+
+</html>
