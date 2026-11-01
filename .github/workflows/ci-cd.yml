@@ -222,7 +222,7 @@ jobs:
         env:
           APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL }}
         run: |
-          URL="${APP_PUBLIC_URL:-http://$EC2_HOST}"
+          URL="${APP_PUBLIC_URL:-http://$EC2_HOST:8082}"
           for i in $(seq 1 15); do
             body=$(curl -fsS --max-time 5 "$URL/api/health" 2>/dev/null || true)
             if printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('status')=='ok' and d.get('version')==sys.argv[1] else 1)" "$GITHUB_SHA" 2>/dev/null; then
