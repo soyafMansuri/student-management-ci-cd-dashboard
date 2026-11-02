@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CI/CD Dashboard</title>
-    <link rel="stylesheet" href="C:\Users\mansu\OneDrive\Desktop\folder\projects\student-management-system\student-management-system\dashboard\static\dashboard.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 </head>
 
 <body data-refresh="{{ refresh }}">
@@ -38,7 +38,7 @@
         <section id="runs" aria-label="Pipeline runs"></section>
         <p id="no-runs" class="empty" hidden></p>
     </main>
-    <script src="C:\Users\mansu\OneDrive\Desktop\folder\projects\student-management-system\student-management-system\dashboard\static\dashboard.js"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 </body>
 
 </html>
